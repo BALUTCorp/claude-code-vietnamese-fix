@@ -50,60 +50,73 @@ def _resolve_symlink_cli(cmd_name='claude'):
         _log(f"resolved: {real_path}")
 
         # Case 1: real_path is cli.js itself
-        if real_path.name == 'cli.js' and real_path.exists():
+        if real_path.name == 'cli.js' and real_path.is_file():
             return str(real_path)
 
-        # Case 2: real_path points into the package dir
-        pkg_dir = real_path.parent
-        while pkg_dir != pkg_dir.parent:
-            candidate = pkg_dir / 'cli.js'
-            if candidate.exists() and '@anthropic-ai' in str(pkg_dir):
-                return str(candidate)
-            pkg_dir = pkg_dir.parent
+        # Case 2: resolved to a directory (standalone install)
+        # e.g. ~/.local/share/claude/versions/2.1.94/
+        if real_path.is_dir():
+            _log(f"resolved is directory, searching inside...")
+            # Direct check
+            direct = real_path / 'node_modules' / '@anthropic-ai' / 'claude-code' / 'cli.js'
+            if direct.exists():
+                return str(direct)
+            # Recursive search (limit depth by searching specific patterns)
+            for cli_js in real_path.rglob('@anthropic-ai/claude-code/cli.js'):
+                return str(cli_js)
+            _log(f"cli.js not found inside resolved dir")
 
-        # Case 3: bin/ dir, sibling lib/ has node_modules
+        # Case 3: real_path points into a package dir
+        if real_path.is_file():
+            pkg_dir = real_path.parent
+            while pkg_dir != pkg_dir.parent:
+                candidate = pkg_dir / 'cli.js'
+                if candidate.exists() and '@anthropic-ai' in str(pkg_dir):
+                    return str(candidate)
+                pkg_dir = pkg_dir.parent
+
+        # Case 4: bin/ dir, sibling lib/ has node_modules
         bin_dir = bin_path.parent
         lib_candidate = bin_dir.parent / 'lib' / 'node_modules' / '@anthropic-ai' / 'claude-code' / 'cli.js'
         if lib_candidate.exists():
             return str(lib_candidate)
 
-        # Case 4: Read the bin stub/script to find the actual JS entry point
-        try:
-            stub_content = real_path.read_text(encoding='utf-8', errors='ignore')
-            # Look for path references to @anthropic-ai/claude-code
-            import re as _re
+        # Case 5: Read the bin stub/script to find the actual JS entry point
+        stub_path = bin_path if bin_path.is_file() else None
+        if stub_path:
+            try:
+                stub_content = stub_path.read_text(encoding='utf-8', errors='ignore')
+                import re as _re
 
-            # Match node .../cli.js or require(".../cli.js")
-            for m in _re.finditer(r'["\']?([^\s"\']*@anthropic-ai/claude-code/cli\.js)["\']?', stub_content):
-                candidate = Path(m.group(1))
-                if candidate.exists():
-                    return str(candidate)
+                for m in _re.finditer(r'["\']?([^\s"\']*@anthropic-ai/claude-code/cli\.js)["\']?', stub_content):
+                    candidate = Path(m.group(1))
+                    if candidate.exists():
+                        return str(candidate)
 
-            # Match: exec node ... or NODE_PATH=... node ...
-            # Standalone installer uses a shell script that references the actual location
-            for m in _re.finditer(r'([^\s"\']+/node_modules/@anthropic-ai/claude-code)', stub_content):
-                candidate = Path(m.group(1)) / 'cli.js'
-                if candidate.exists():
-                    return str(candidate)
+                for m in _re.finditer(r'([^\s"\']+/node_modules/@anthropic-ai/claude-code)', stub_content):
+                    candidate = Path(m.group(1)) / 'cli.js'
+                    if candidate.exists():
+                        return str(candidate)
 
-            # Expand ~ and $HOME references
-            for m in _re.finditer(r'((?:\$HOME|~)[^\s"\']*/@anthropic-ai/claude-code)', stub_content):
-                expanded = m.group(1).replace('$HOME', str(Path.home())).replace('~', str(Path.home()))
-                candidate = Path(expanded) / 'cli.js'
-                if candidate.exists():
-                    return str(candidate)
+                for m in _re.finditer(r'((?:\$HOME|~)[^\s"\']*/@anthropic-ai/claude-code)', stub_content):
+                    expanded = m.group(1).replace('$HOME', str(Path.home())).replace('~', str(Path.home()))
+                    candidate = Path(expanded) / 'cli.js'
+                    if candidate.exists():
+                        return str(candidate)
+            except Exception:
+                pass
 
-        except Exception:
-            pass
-
-        # Case 5: Standalone install — search ~/.claude/local/ from bin path
-        # e.g. ~/.local/bin/claude -> ~/.claude/local/.../cli.js
+        # Case 6: Standalone install paths
         home = Path.home()
-        claude_local = home / '.claude' / 'local'
-        if claude_local.exists():
-            _log(f"scanning standalone: {claude_local}")
-            for cli_js in claude_local.rglob('@anthropic-ai/claude-code/cli.js'):
-                return str(cli_js)
+        standalone_dirs = [
+            home / '.local' / 'share' / 'claude',
+            home / '.claude' / 'local',
+        ]
+        for sdir in standalone_dirs:
+            if sdir.exists():
+                _log(f"scanning standalone: {sdir}")
+                for cli_js in sdir.rglob('@anthropic-ai/claude-code/cli.js'):
+                    return str(cli_js)
 
     except Exception as e:
         _log(f"resolve error: {e}")
@@ -137,13 +150,17 @@ def find_cli_js():
     if result:
         return result
 
-    # Method 2: Standalone install (~/.claude/local/)
+    # Method 2: Standalone install (~/.local/share/claude/ and ~/.claude/local/)
     home = Path.home()
-    standalone_dir = home / '.claude' / 'local'
-    if standalone_dir.exists():
-        _log(f"scanning standalone: {standalone_dir}")
-        for cli_js in standalone_dir.rglob('@anthropic-ai/claude-code/cli.js'):
-            return str(cli_js)
+    standalone_dirs = [
+        home / '.local' / 'share' / 'claude',
+        home / '.claude' / 'local',
+    ]
+    for sdir in standalone_dirs:
+        if sdir.exists():
+            _log(f"scanning standalone: {sdir}")
+            for cli_js in sdir.rglob('@anthropic-ai/claude-code/cli.js'):
+                return str(cli_js)
 
     # Method 3: npm root -g
     result = _npm_global_root()
