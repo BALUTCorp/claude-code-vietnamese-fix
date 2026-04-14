@@ -27,8 +27,81 @@ PATCH_MARKER = "/* Vietnamese IME fix */"
 DEL_CHAR = chr(127)  # 0x7F - character used by Vietnamese IME for backspace
 
 
+def _resolve_symlink_cli(cmd_name='claude'):
+    """Try to find cli.js by resolving the 'claude' command symlink/shim."""
+    try:
+        # which claude / where claude
+        result = subprocess.run(
+            ['which', cmd_name] if platform.system() != 'Windows' else ['where', cmd_name],
+            capture_output=True, text=True, timeout=5
+        )
+        if result.returncode != 0:
+            return None
+
+        bin_path = Path(result.stdout.strip().splitlines()[0])
+
+        # Resolve symlink chain (e.g. /usr/local/bin/claude -> ../lib/node_modules/...)
+        real_path = bin_path.resolve()
+
+        # Case 1: real_path is cli.js itself
+        if real_path.name == 'cli.js' and real_path.exists():
+            return str(real_path)
+
+        # Case 2: real_path is a bin stub, look for cli.js in same package
+        # e.g. .../node_modules/@anthropic-ai/claude-code/bin/claude.js
+        pkg_dir = real_path.parent
+        while pkg_dir != pkg_dir.parent:
+            candidate = pkg_dir / 'cli.js'
+            if candidate.exists() and '@anthropic-ai' in str(pkg_dir):
+                return str(candidate)
+            pkg_dir = pkg_dir.parent
+
+        # Case 3: bin_path is in a bin/ dir, sibling lib/ has node_modules
+        # e.g. /usr/local/bin/claude -> /usr/local/lib/node_modules/@anthropic-ai/claude-code/cli.js
+        bin_dir = bin_path.parent
+        lib_candidate = bin_dir.parent / 'lib' / 'node_modules' / '@anthropic-ai' / 'claude-code' / 'cli.js'
+        if lib_candidate.exists():
+            return str(lib_candidate)
+
+    except Exception:
+        pass
+    return None
+
+
+def _npm_global_prefix():
+    """Get npm global prefix directory."""
+    try:
+        result = subprocess.run(
+            ['npm', 'prefix', '-g'],
+            capture_output=True, text=True, timeout=10
+        )
+        if result.returncode == 0:
+            prefix = Path(result.stdout.strip())
+            candidate = prefix / 'lib' / 'node_modules' / '@anthropic-ai' / 'claude-code' / 'cli.js'
+            if candidate.exists():
+                return str(candidate)
+            # Windows: node_modules directly under prefix
+            candidate2 = prefix / 'node_modules' / '@anthropic-ai' / 'claude-code' / 'cli.js'
+            if candidate2.exists():
+                return str(candidate2)
+    except Exception:
+        pass
+    return None
+
+
 def find_cli_js():
     """Auto-detect Claude Code npm cli.js location."""
+    # Method 1: Resolve from 'claude' command path (works for global install)
+    result = _resolve_symlink_cli('claude')
+    if result:
+        return result
+
+    # Method 2: Ask npm for global prefix
+    result = _npm_global_prefix()
+    if result:
+        return result
+
+    # Method 3: Search known directories
     home = Path.home()
     is_windows = platform.system() == 'Windows'
 
@@ -47,6 +120,11 @@ def find_cli_js():
 
     for d in search_dirs:
         if d.exists():
+            # Direct path check first (global install)
+            direct = d / '@anthropic-ai' / 'claude-code' / 'cli.js'
+            if direct.exists():
+                return str(direct)
+            # Then recursive search (npx cache, nvm, etc.)
             for cli_js in d.rglob('*/@anthropic-ai/claude-code/cli.js'):
                 return str(cli_js)
 
