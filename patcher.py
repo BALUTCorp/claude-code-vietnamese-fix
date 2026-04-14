@@ -33,103 +33,89 @@ def _log(msg):
 
 
 def _resolve_symlink_cli(cmd_name='claude'):
-    """Try to find cli.js by resolving the 'claude' command symlink/shim."""
+    """Try to find cli.js by resolving the 'claude' command."""
     try:
-        # which claude / where claude
         which_cmd = ['which', cmd_name] if platform.system() != 'Windows' else ['where', cmd_name]
         result = subprocess.run(which_cmd, capture_output=True, text=True, timeout=5)
         if result.returncode != 0:
             _log(f"which {cmd_name}: not found")
             return None
 
-        bin_path = Path(result.stdout.strip().splitlines()[0])
+        bin_path = result.stdout.strip().splitlines()[0]
         _log(f"which {cmd_name}: {bin_path}")
 
-        # Resolve symlink chain
-        real_path = bin_path.resolve()
+        # Follow symlinks manually with os.readlink (non-blocking)
+        real_path = bin_path
+        seen = set()
+        while os.path.islink(real_path):
+            if real_path in seen:
+                break
+            seen.add(real_path)
+            target = os.readlink(real_path)
+            if not os.path.isabs(target):
+                target = os.path.join(os.path.dirname(real_path), target)
+            real_path = os.path.normpath(target)
+
         _log(f"resolved: {real_path}")
 
-        # Case 1: real_path is cli.js itself
-        if real_path.name == 'cli.js' and real_path.is_file():
-            return str(real_path)
+        # If resolved to a file named cli.js
+        if os.path.basename(real_path) == 'cli.js' and os.path.isfile(real_path):
+            return real_path
 
-        # Case 2: resolved to a directory (standalone install)
-        # e.g. ~/.local/share/claude/versions/2.1.94/
-        if real_path.is_dir():
-            _log(f"resolved is directory, searching inside...")
-            # Direct check — standalone bundles node_modules inside version dir
-            direct = real_path / 'node_modules' / '@anthropic-ai' / 'claude-code' / 'cli.js'
-            if direct.exists():
-                return str(direct)
-            # Also check without node_modules prefix
-            direct2 = real_path / '@anthropic-ai' / 'claude-code' / 'cli.js'
-            if direct2.exists():
-                return str(direct2)
-            # Check cli.js at root of resolved dir
-            direct3 = real_path / 'cli.js'
-            if direct3.exists():
-                return str(direct3)
-            _log(f"cli.js not found in direct paths, trying shallow scan...")
-            # Shallow scan: only check immediate subdirs (avoid deep rglob)
-            for sub in real_path.iterdir():
-                if sub.is_dir():
-                    c = sub / '@anthropic-ai' / 'claude-code' / 'cli.js'
-                    if c.exists():
-                        return str(c)
-            _log(f"cli.js not found inside resolved dir")
+        # If resolved to a directory (standalone: ~/.local/share/claude/versions/X.Y.Z)
+        if os.path.isdir(real_path):
+            _log(f"resolved is directory")
+            # Check known paths inside
+            for sub in ['node_modules/@anthropic-ai/claude-code/cli.js',
+                        '@anthropic-ai/claude-code/cli.js',
+                        'cli.js']:
+                c = os.path.join(real_path, sub)
+                if os.path.isfile(c):
+                    return c
 
-        # Case 3: real_path points into a package dir
-        if real_path.is_file():
-            pkg_dir = real_path.parent
-            while pkg_dir != pkg_dir.parent:
-                candidate = pkg_dir / 'cli.js'
-                if candidate.exists() and '@anthropic-ai' in str(pkg_dir):
-                    return str(candidate)
-                pkg_dir = pkg_dir.parent
+        # If resolved to a file (bin stub), check sibling paths
+        if os.path.isfile(real_path):
+            # Walk up to find @anthropic-ai in path
+            d = os.path.dirname(real_path)
+            for _ in range(10):
+                c = os.path.join(d, 'cli.js')
+                if os.path.isfile(c) and '@anthropic-ai' in d:
+                    return c
+                parent = os.path.dirname(d)
+                if parent == d:
+                    break
+                d = parent
 
-        # Case 4: bin/ dir, sibling lib/ has node_modules
-        bin_dir = bin_path.parent
-        lib_candidate = bin_dir.parent / 'lib' / 'node_modules' / '@anthropic-ai' / 'claude-code' / 'cli.js'
-        if lib_candidate.exists():
-            return str(lib_candidate)
+        # Check sibling lib/node_modules from bin dir
+        bin_dir = os.path.dirname(bin_path)
+        c = os.path.join(bin_dir, '..', 'lib', 'node_modules',
+                         '@anthropic-ai', 'claude-code', 'cli.js')
+        c = os.path.normpath(c)
+        if os.path.isfile(c):
+            return c
 
-        # Case 5: Read the bin stub/script to find the actual JS entry point
-        stub_path = bin_path if bin_path.is_file() else None
-        if stub_path:
-            try:
-                stub_content = stub_path.read_text(encoding='utf-8', errors='ignore')
-                import re as _re
+        # Read bin stub content to find paths
+        try:
+            with open(bin_path, 'r', encoding='utf-8', errors='ignore') as f:
+                stub = f.read(4096)  # Only read first 4KB
 
-                for m in _re.finditer(r'["\']?([^\s"\']*@anthropic-ai/claude-code/cli\.js)["\']?', stub_content):
-                    candidate = Path(m.group(1))
-                    if candidate.exists():
-                        return str(candidate)
+            # Look for explicit cli.js path
+            for m in re.finditer(r'([^\s"\']*@anthropic-ai/claude-code/cli\.js)', stub):
+                p = m.group(1)
+                # Expand $HOME / ~
+                p = p.replace('$HOME', str(Path.home())).replace('~', str(Path.home()))
+                if os.path.isfile(p):
+                    return p
 
-                for m in _re.finditer(r'([^\s"\']+/node_modules/@anthropic-ai/claude-code)', stub_content):
-                    candidate = Path(m.group(1)) / 'cli.js'
-                    if candidate.exists():
-                        return str(candidate)
-
-                for m in _re.finditer(r'((?:\$HOME|~)[^\s"\']*/@anthropic-ai/claude-code)', stub_content):
-                    expanded = m.group(1).replace('$HOME', str(Path.home())).replace('~', str(Path.home()))
-                    candidate = Path(expanded) / 'cli.js'
-                    if candidate.exists():
-                        return str(candidate)
-            except Exception:
-                pass
-
-        # Case 6: Standalone install paths
-        home = Path.home()
-        standalone_dirs = [
-            home / '.local' / 'share' / 'claude',
-            home / '.claude' / 'local',
-        ]
-        for sdir in standalone_dirs:
-            if sdir.exists():
-                _log(f"scanning standalone: {sdir}")
-                found = _find_cli_in_dir(sdir)
-                if found:
-                    return found
+            # Look for node_modules/@anthropic-ai/claude-code
+            for m in re.finditer(r'([^\s"\']+/node_modules/@anthropic-ai/claude-code)', stub):
+                p = m.group(1)
+                p = p.replace('$HOME', str(Path.home())).replace('~', str(Path.home()))
+                c = os.path.join(p, 'cli.js')
+                if os.path.isfile(c):
+                    return c
+        except Exception:
+            pass
 
     except Exception as e:
         _log(f"resolve error: {e}")
