@@ -57,13 +57,25 @@ def _resolve_symlink_cli(cmd_name='claude'):
         # e.g. ~/.local/share/claude/versions/2.1.94/
         if real_path.is_dir():
             _log(f"resolved is directory, searching inside...")
-            # Direct check
+            # Direct check — standalone bundles node_modules inside version dir
             direct = real_path / 'node_modules' / '@anthropic-ai' / 'claude-code' / 'cli.js'
             if direct.exists():
                 return str(direct)
-            # Recursive search (limit depth by searching specific patterns)
-            for cli_js in real_path.rglob('@anthropic-ai/claude-code/cli.js'):
-                return str(cli_js)
+            # Also check without node_modules prefix
+            direct2 = real_path / '@anthropic-ai' / 'claude-code' / 'cli.js'
+            if direct2.exists():
+                return str(direct2)
+            # Check cli.js at root of resolved dir
+            direct3 = real_path / 'cli.js'
+            if direct3.exists():
+                return str(direct3)
+            _log(f"cli.js not found in direct paths, trying shallow scan...")
+            # Shallow scan: only check immediate subdirs (avoid deep rglob)
+            for sub in real_path.iterdir():
+                if sub.is_dir():
+                    c = sub / '@anthropic-ai' / 'claude-code' / 'cli.js'
+                    if c.exists():
+                        return str(c)
             _log(f"cli.js not found inside resolved dir")
 
         # Case 3: real_path points into a package dir
@@ -115,15 +127,83 @@ def _resolve_symlink_cli(cmd_name='claude'):
         for sdir in standalone_dirs:
             if sdir.exists():
                 _log(f"scanning standalone: {sdir}")
-                for cli_js in sdir.rglob('@anthropic-ai/claude-code/cli.js'):
-                    return str(cli_js)
+                found = _find_cli_in_dir(sdir)
+                if found:
+                    return found
 
     except Exception as e:
         _log(f"resolve error: {e}")
     return None
 
 
-def _npm_global_root():
+def _find_cli_in_dir(base_dir):
+    """Find cli.js inside a directory without deep rglob (avoids hanging on large node_modules).
+    
+    Checks common known paths first, then does a controlled shallow search.
+    """
+    base = Path(base_dir)
+    target = Path('@anthropic-ai') / 'claude-code' / 'cli.js'
+
+    # 1. Direct: base/@anthropic-ai/claude-code/cli.js
+    c = base / target
+    if c.exists():
+        return str(c)
+
+    # 2. With node_modules: base/node_modules/@anthropic-ai/claude-code/cli.js
+    c = base / 'node_modules' / target
+    if c.exists():
+        return str(c)
+
+    # 3. Standalone versions: base/versions/*/node_modules/@anthropic-ai/claude-code/cli.js
+    versions_dir = base / 'versions'
+    if versions_dir.is_dir():
+        # Sort descending to find latest version first
+        try:
+            version_dirs = sorted(
+                [d for d in versions_dir.iterdir() if d.is_dir()],
+                key=lambda d: d.name,
+                reverse=True
+            )
+        except OSError:
+            version_dirs = []
+        for vdir in version_dirs:
+            c = vdir / 'node_modules' / target
+            if c.exists():
+                return str(c)
+            # Also check directly inside version dir
+            c = vdir / target
+            if c.exists():
+                return str(c)
+
+    # 4. One-level subdirs: base/*/node_modules/@anthropic-ai/claude-code/cli.js
+    try:
+        for sub in base.iterdir():
+            if sub.is_dir() and sub.name != 'versions':  # already checked above
+                c = sub / 'node_modules' / target
+                if c.exists():
+                    return str(c)
+                c = sub / target
+                if c.exists():
+                    return str(c)
+    except OSError:
+        pass
+
+    # 5. Two-level: base/*/*/node_modules/@anthropic-ai/claude-code/cli.js
+    try:
+        for sub in base.iterdir():
+            if sub.is_dir():
+                for sub2 in sub.iterdir():
+                    if sub2.is_dir():
+                        c = sub2 / 'node_modules' / target
+                        if c.exists():
+                            return str(c)
+                        c = sub2 / target
+                        if c.exists():
+                            return str(c)
+    except OSError:
+        pass
+
+    return None
     """Get npm global root directory via 'npm root -g'."""
     try:
         result = subprocess.run(
@@ -159,8 +239,9 @@ def find_cli_js():
     for sdir in standalone_dirs:
         if sdir.exists():
             _log(f"scanning standalone: {sdir}")
-            for cli_js in sdir.rglob('@anthropic-ai/claude-code/cli.js'):
-                return str(cli_js)
+            found = _find_cli_in_dir(sdir)
+            if found:
+                return found
 
     # Method 3: npm root -g
     result = _npm_global_root()
@@ -201,13 +282,10 @@ def find_cli_js():
         if not d.exists():
             continue
         _log(f"scanning: {d}")
-        # Direct path check first (global install)
-        direct = d / '@anthropic-ai' / 'claude-code' / 'cli.js'
-        if direct.exists():
-            return str(direct)
-        # Recursive search (npx cache, nvm, volta, fnm, etc.)
-        for cli_js in d.rglob('@anthropic-ai/claude-code/cli.js'):
-            return str(cli_js)
+        # Use controlled search (no rglob to avoid hanging)
+        found = _find_cli_in_dir(d)
+        if found:
+            return found
 
     raise FileNotFoundError(
         "Không tìm thấy Claude Code cli.js.\n"
