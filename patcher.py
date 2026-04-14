@@ -67,25 +67,43 @@ def _resolve_symlink_cli(cmd_name='claude'):
         if lib_candidate.exists():
             return str(lib_candidate)
 
-        # Case 4: Read the bin stub to find the actual JS entry point
+        # Case 4: Read the bin stub/script to find the actual JS entry point
         try:
-            stub_content = bin_path.read_text(encoding='utf-8', errors='ignore')
-            # npm bin stubs contain: "$basedir/../lib/node_modules/..." or require("...")
+            stub_content = real_path.read_text(encoding='utf-8', errors='ignore')
+            # Look for path references to @anthropic-ai/claude-code
             import re as _re
-            m = _re.search(r'@anthropic-ai[/\\]claude-code[/\\](\S+)', stub_content)
-            if m:
-                # Reconstruct path from bin_path parent
-                rel = m.group(0).strip('"').strip("'")
-                for base in [bin_path.parent, bin_path.parent.parent / 'lib' / 'node_modules']:
-                    candidate = (base / rel).resolve()
-                    pkg = candidate.parent
-                    while pkg != pkg.parent:
-                        c = pkg / 'cli.js'
-                        if c.exists():
-                            return str(c)
-                        pkg = pkg.parent
+
+            # Match node .../cli.js or require(".../cli.js")
+            for m in _re.finditer(r'["\']?([^\s"\']*@anthropic-ai/claude-code/cli\.js)["\']?', stub_content):
+                candidate = Path(m.group(1))
+                if candidate.exists():
+                    return str(candidate)
+
+            # Match: exec node ... or NODE_PATH=... node ...
+            # Standalone installer uses a shell script that references the actual location
+            for m in _re.finditer(r'([^\s"\']+/node_modules/@anthropic-ai/claude-code)', stub_content):
+                candidate = Path(m.group(1)) / 'cli.js'
+                if candidate.exists():
+                    return str(candidate)
+
+            # Expand ~ and $HOME references
+            for m in _re.finditer(r'((?:\$HOME|~)[^\s"\']*/@anthropic-ai/claude-code)', stub_content):
+                expanded = m.group(1).replace('$HOME', str(Path.home())).replace('~', str(Path.home()))
+                candidate = Path(expanded) / 'cli.js'
+                if candidate.exists():
+                    return str(candidate)
+
         except Exception:
             pass
+
+        # Case 5: Standalone install — search ~/.claude/local/ from bin path
+        # e.g. ~/.local/bin/claude -> ~/.claude/local/.../cli.js
+        home = Path.home()
+        claude_local = home / '.claude' / 'local'
+        if claude_local.exists():
+            _log(f"scanning standalone: {claude_local}")
+            for cli_js in claude_local.rglob('@anthropic-ai/claude-code/cli.js'):
+                return str(cli_js)
 
     except Exception as e:
         _log(f"resolve error: {e}")
@@ -119,13 +137,20 @@ def find_cli_js():
     if result:
         return result
 
-    # Method 2: npm root -g
+    # Method 2: Standalone install (~/.claude/local/)
+    home = Path.home()
+    standalone_dir = home / '.claude' / 'local'
+    if standalone_dir.exists():
+        _log(f"scanning standalone: {standalone_dir}")
+        for cli_js in standalone_dir.rglob('@anthropic-ai/claude-code/cli.js'):
+            return str(cli_js)
+
+    # Method 3: npm root -g
     result = _npm_global_root()
     if result:
         return result
 
-    # Method 3: Search known directories
-    home = Path.home()
+    # Method 4: Search known directories
     is_windows = platform.system() == 'Windows'
 
     if is_windows:
@@ -151,6 +176,8 @@ def find_cli_js():
             # pnpm
             home / 'Library' / 'pnpm' / 'global',
             home / '.local' / 'share' / 'pnpm' / 'global',
+            # Standalone local bin
+            home / '.local' / 'lib',
         ]
 
     for d in search_dirs:
@@ -168,7 +195,7 @@ def find_cli_js():
     raise FileNotFoundError(
         "Không tìm thấy Claude Code cli.js.\n"
         "Thử chạy: python3 patcher.py --path $(which claude | xargs readlink -f | xargs dirname)/cli.js\n"
-        "Hoặc: find / -name cli.js -path '*@anthropic-ai/claude-code*' 2>/dev/null"
+        "Hoặc: find ~ -name cli.js -path '*@anthropic-ai/claude-code*' 2>/dev/null"
     )
 
 
