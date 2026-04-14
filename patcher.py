@@ -62,6 +62,26 @@ def _resolve_symlink_cli(cmd_name='claude'):
         if os.path.basename(real_path) == 'cli.js' and os.path.isfile(real_path):
             return real_path
 
+        # If resolved to a native binary (not JS), warn user
+        if os.path.isfile(real_path) and not real_path.endswith('.js'):
+            try:
+                with open(real_path, 'rb') as f:
+                    magic = f.read(4)
+                # Mach-O: 0xFEEDFACE, 0xFEEDFACF, 0xCAFEBABE (universal)
+                # ELF: 0x7F454C46
+                if magic[:4] in (b'\xfe\xed\xfa\xce', b'\xfe\xed\xfa\xcf',
+                                 b'\xca\xfe\xba\xbe', b'\x7fELF',
+                                 b'\xcf\xfa\xed\xfe', b'\xce\xfa\xed\xfe'):
+                    raise FileNotFoundError(
+                        f"Claude Code tại {bin_path} là native binary, không phải bản npm.\n"
+                        f"Patcher chỉ hỗ trợ bản npm. Cài đặt:\n"
+                        f"  npm install -g @anthropic-ai/claude-code"
+                    )
+            except FileNotFoundError:
+                raise
+            except Exception:
+                pass
+
         # If resolved to a directory (standalone: ~/.local/share/claude/versions/X.Y.Z)
         if os.path.isdir(real_path):
             _log(f"resolved is directory")

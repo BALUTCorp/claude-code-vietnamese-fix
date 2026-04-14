@@ -10,6 +10,8 @@ Khi gõ tiếng Việt trong Claude Code CLI, các bộ gõ sử dụng kỹ thu
 - Văn bản hiển thị không đúng với những gì đã gõ
 - Phải copy-paste từ nơi khác thay vì gõ trực tiếp
 
+> **Lưu ý:** Patcher chỉ hoạt động với bản **npm** của Claude Code (`npm install -g @anthropic-ai/claude-code`). Bản standalone binary (cài qua `curl` installer chính thức) không hỗ trợ vì đã được compile thành native binary, không có file JS để patch.
+
 ## Cài đặt
 
 Lần đầu chạy sẽ **tự động fix** luôn.
