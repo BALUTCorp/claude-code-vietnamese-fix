@@ -17,13 +17,13 @@ Lần đầu chạy sẽ **tự động fix** luôn.
 **macOS / Linux:**
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/manhit96/claude-code-vietnamese-fix/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/BALUTCorp/claude-code-vietnamese-fix/main/install.sh | bash
 ```
 
 **Windows (PowerShell):**
 
 ```powershell
-irm https://raw.githubusercontent.com/manhit96/claude-code-vietnamese-fix/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/BALUTCorp/claude-code-vietnamese-fix/main/install.ps1 | iex
 ```
 
 ## Sau khi update Claude Code
@@ -57,4 +57,4 @@ cd ~/.claude-vn-fix && git pull
 
 ## Credits
 
-Tham khảo và cải tiến từ [PHTV](https://github.com/phamhungtien/PHTV).
+Tham khảo và cải tiến từ [manhit96/claude-code-vietnamese-fix](https://github.com/manhit96/claude-code-vietnamese-fix) và [PHTV](https://github.com/phamhungtien/PHTV).

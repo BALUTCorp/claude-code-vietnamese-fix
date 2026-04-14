@@ -10,7 +10,7 @@ Usage:
   python3 patcher.py --restore    Restore from backup
   python3 patcher.py --path FILE  Fix specific file
 
-Repository: https://github.com/manhit96/claude-code-vietnamese-fix
+Repository: https://github.com/BALUTCorp/claude-code-vietnamese-fix
 License: MIT
 """
 
@@ -208,7 +208,7 @@ def patch(file_path):
 
     except Exception as e:
         print(f"\nLỗi: {e}", file=sys.stderr)
-        print("Báo lỗi tại: https://github.com/manhit96/claude-code-vietnamese-fix/issues", file=sys.stderr)
+        print("Báo lỗi tại: https://github.com/BALUTCorp/claude-code-vietnamese-fix/issues", file=sys.stderr)
         # Rollback
         if os.path.exists(backup_path):
             shutil.copy2(backup_path, file_path)
@@ -240,7 +240,7 @@ def show_help():
     print("  python3 patcher.py --path FILE  Fix file cụ thể")
     print("  python3 patcher.py --help       Hiển thị hướng dẫn")
     print("")
-    print("https://github.com/manhit96/claude-code-vietnamese-fix")
+    print("https://github.com/BALUTCorp/claude-code-vietnamese-fix")
 
 
 def main():

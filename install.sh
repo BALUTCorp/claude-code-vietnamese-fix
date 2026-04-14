@@ -4,12 +4,12 @@
 # Clone repo và tự động chạy fix
 #
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/manhit96/claude-code-vietnamese-fix/main/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/BALUTCorp/claude-code-vietnamese-fix/main/install.sh | bash
 #
 
 set -euo pipefail
 
-REPO_URL="https://github.com/manhit96/claude-code-vietnamese-fix.git"
+REPO_URL="https://github.com/BALUTCorp/claude-code-vietnamese-fix.git"
 INSTALL_DIR="$HOME/.claude-vn-fix"
 
 echo ""
